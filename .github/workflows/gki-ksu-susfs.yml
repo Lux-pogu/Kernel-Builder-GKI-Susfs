@@ -205,7 +205,6 @@ jobs:
 
       - name: Integrate Root Manager (${{ inputs.root_manager }})
         if: inputs.root_manager != 'Stock' && inputs.enable_ksu_susfs == true
-        working-directory: kernel_workspace
         env:
           KSU_VARIANT_REPO_URL: ${{ env.KSU_VARIANT_REPO_URL }}
           KSU_VARIANT_REF: ${{ env.KSU_VARIANT_REF }}
