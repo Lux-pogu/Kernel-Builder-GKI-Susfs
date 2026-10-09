@@ -316,6 +316,13 @@ jobs:
           ENABLE_NET_OPTS: ${{ inputs.enable_net_opts }}
           ROOT_MANAGER: ${{ inputs.root_manager }}
         run: |
+          echo ">>> Forcing Bazel resource limits via global bazelrc..."
+          cat << 'EOF' > ~/.bazelrc
+          startup --host_jvm_args=-Xmx3g
+          build --local_ram_resources=4096
+          build --local_cpu_resources=2
+          EOF
+
           # Injecting the REAL Google identity into the script session
           OFFICIAL_HASH=${{ env.OFFICIAL_HASH }} \
           OFFICIAL_DATE=${{ env.OFFICIAL_DATE }} \
