@@ -213,7 +213,7 @@ jobs:
           INTEGRATE_SUSFS: ${{ inputs.enable_ksu_susfs }}
           SUSFS_BRANCH: ${{ env.SUSFS_BRANCH }}
         run: |
-          bash ../scripts/inject_ksu_variant.sh "${{ inputs.root_manager }}"
+          bash ./scripts/inject_ksu_variant.sh "${{ inputs.root_manager }}"
 
       - name: Integrate SUSFS common-side
         if: inputs.root_manager != 'Stock' && inputs.enable_ksu_susfs == true
