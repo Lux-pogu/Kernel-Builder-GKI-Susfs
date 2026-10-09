@@ -40,11 +40,18 @@ if [ -f "$INJECTOR_SCRIPT" ]; then
     source "$INJECTOR_SCRIPT"
     
     # Reset active working directory back to kernel_workspace
+# Reset active working directory back to kernel_workspace
     cd "${GITHUB_WORKSPACE}/kernel_workspace"
-else
-    echo "[-] CRITICAL: Modular script $INJECTOR_SCRIPT not found!" >&2
-    exit 1
-fi
+
+    # Dynamically find the directory containing the kernel Makefile
+    KERNEL_ROOT=$(find "${GITHUB_WORKSPACE}/kernel_workspace" -maxdepth 3 -type f -name "Makefile" -exec grep -l "^VERSION =" {} + | head -n 1 | xargs dirname)
+
+    if [ -z "$KERNEL_ROOT" ]; then
+        echo "[-] Error: Could not locate kernel Makefile in kernel_workspace" >&2
+        exit 1
+    fi
+
+    echo ">>> Detected kernel source root at: ${KERNEL_ROOT}"
 
 # ========================================================================
 # KERNEL 6.6/6.12 UPSTREAM COMPATIBILITY FIXES (UNIVERSAL TARGETED WIPER)
