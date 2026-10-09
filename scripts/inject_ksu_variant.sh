@@ -3,7 +3,6 @@
 set -euo pipefail
 
 cd "${GITHUB_WORKSPACE}/kernel_workspace"
-[ -d common ] || { echo "[-] common/ not found in kernel_workspace" >&2; exit 1; }
 
 VARIANT=$1
 # Export these so the sourced scripts can use them natively
@@ -30,7 +29,6 @@ echo "=== Integrating ${VARIANT} ==="
 # ========================================================================
 # MODULAR DELEGATION
 # ========================================================================
-# Note the '../' because we are currently inside the 'kernel_workspace' directory
 INJECTOR_SCRIPT="../scripts/inject_${VARIANT}.sh"
 
 if [ -f "$INJECTOR_SCRIPT" ]; then
@@ -40,18 +38,21 @@ if [ -f "$INJECTOR_SCRIPT" ]; then
     source "$INJECTOR_SCRIPT"
     
     # Reset active working directory back to kernel_workspace
-# Reset active working directory back to kernel_workspace
     cd "${GITHUB_WORKSPACE}/kernel_workspace"
+else
+    echo "[-] CRITICAL: Modular script $INJECTOR_SCRIPT not found!" >&2
+    exit 1
+fi
 
-    # Dynamically find the directory containing the kernel Makefile
-    KERNEL_ROOT=$(find "${GITHUB_WORKSPACE}/kernel_workspace" -maxdepth 3 -type f -name "Makefile" -exec grep -l "^VERSION =" {} + | head -n 1 | xargs dirname)
+# Dynamically find the directory containing the top-level kernel Makefile
+KERNEL_ROOT=$(find "${GITHUB_WORKSPACE}/kernel_workspace" -maxdepth 3 -type f -name "Makefile" -exec grep -l "^VERSION =" {} + | head -n 1 | xargs dirname)
 
-    if [ -z "$KERNEL_ROOT" ]; then
-        echo "[-] Error: Could not locate kernel Makefile in kernel_workspace" >&2
-        exit 1
-    fi
+if [ -z "$KERNEL_ROOT" ]; then
+    echo "[-] Error: Could not locate kernel Makefile in kernel_workspace" >&2
+    exit 1
+fi
 
-    echo ">>> Detected kernel source root at: ${KERNEL_ROOT}"
+echo ">>> Detected kernel source root at: ${KERNEL_ROOT}"
 
 # ========================================================================
 # KERNEL 6.6/6.12 UPSTREAM COMPATIBILITY FIXES (UNIVERSAL TARGETED WIPER)
@@ -62,8 +63,8 @@ SELINUX_HIDE="${MANAGER_DIR}/kernel/feature/selinux_hide.c"
 if [ -f "$SELINUX_HIDE" ]; then
     
     # 1. Determine correct return type for BakaSU's __maybe_void macro
-    K_VER=$(grep "^VERSION =" common/Makefile | tr -d ' ' | cut -d'=' -f2 || echo "0")
-    K_PATCH=$(grep "^PATCHLEVEL =" common/Makefile | tr -d ' ' | cut -d'=' -f2 || echo "0")
+    K_VER=$(grep "^VERSION =" "${KERNEL_ROOT}/Makefile" | tr -d ' ' | cut -d'=' -f2 || echo "0")
+    K_PATCH=$(grep "^PATCHLEVEL =" "${KERNEL_ROOT}/Makefile" | tr -d ' ' | cut -d'=' -f2 || echo "0")
     
     if [ "$K_VER" = "6" ] && [ "$K_PATCH" -ge "6" ]; then
         COMPUTE_AV_RET="void"
@@ -93,7 +94,6 @@ fi
 # ========================================================================
 # KLEAF SANDBOX IMMUTABLE GATEKEEPER
 # ========================================================================
-# (These variables were populated by the sourced variant script)
 SHORT_HASH=${UPSTREAM_HASH:0:7}
 echo "UPSTREAM_HASH=${UPSTREAM_HASH}" >> $GITHUB_ENV
 
@@ -138,9 +138,14 @@ fi
 # KERNEL DRIVER SYMLINK
 # ========================================================================
 echo ">>> Injecting Bazel symlink..."
-DRIVER_ROOT="common/drivers"
+DRIVER_ROOT="${KERNEL_ROOT}/drivers"
+mkdir -p "${DRIVER_ROOT}"
 rm -rf "${DRIVER_ROOT}/kernelsu"
-ln -sfn "../../${MANAGER_DIR}/kernel" "${DRIVER_ROOT}/kernelsu"
+
+TARGET_KSU_DIR="${GITHUB_WORKSPACE}/kernel_workspace/${MANAGER_DIR}/kernel"
+REL_PATH=$(python3 -c "import os.path; print(os.path.relpath('${TARGET_KSU_DIR}', '${DRIVER_ROOT}'))")
+
+ln -sfn "${REL_PATH}" "${DRIVER_ROOT}/kernelsu"
 [ -L "${DRIVER_ROOT}/kernelsu" ] || { echo "[-] Symlink failed" >&2; exit 1; }
 
 echo ">>> ${MANAGER_DIR} architecture locked, sanitized and integrated!"
