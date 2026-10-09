@@ -58,7 +58,7 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  MANIFEST_URL: https://github.com/GrapheneOS/kernel_manifest-pixel
+  MANIFEST_URL: https://github.com/GrapheneOS/kernel_manifest-6.1
   OTA_URL: ${{ inputs.ota_url }}
 
 jobs:
@@ -113,11 +113,11 @@ jobs:
         id: resolve_manifest
         run: |
           TARGET_RAW="${{ inputs.target_version }}"
-          echo ">>> Using GrapheneOS Tag: $TARGET_RAW"
+          echo ">>> Using GrapheneOS Tag/Branch: $TARGET_RAW"
           
           echo "MANIFEST_BRANCH=${TARGET_RAW}" >> $GITHUB_ENV
           echo "ROOT_MANAGER=${{ inputs.root_manager }}" >> $GITHUB_ENV
-          echo "MANIFEST_URL=https://github.com/GrapheneOS/kernel_manifest-pixel" >> $GITHUB_ENV
+          echo "MANIFEST_URL=https://github.com/GrapheneOS/kernel_manifest-6.1" >> $GITHUB_ENV
           
           # Hardcode BASE_VER for Pixel 9 (Tensor G4 uses 6.1) so patches apply properly
           echo "BASE_VER=6.1" >> $GITHUB_ENV
