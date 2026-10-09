@@ -260,14 +260,19 @@ jobs:
             echo "obj-\$(CONFIG_NOMOUNT) += nomount.o" > "$NOMOUNT_DIR/Makefile"
           fi
 
-          echo ">>> Injecting user source files into common tree..."
+          echo ">>> Injecting user source files into target tree..."
           shopt -s dotglob nullglob
           
-          # Only attempt to copy if there are actually files in the directory
+          # Detect if this is a nested Pixel tree (common/ack) or standard GKI
+          KERNEL_SRC_DIR="kernel_workspace/common/common/ack"
+          if [ ! -d "$KERNEL_SRC_DIR/fs" ]; then
+            KERNEL_SRC_DIR="kernel_workspace/common"
+          fi
+          
           SRC_FILES=($(pwd)/tools/user_source/*)
           if [ ${#SRC_FILES[@]} -gt 0 ]; then
-            cp -r "$(pwd)/tools/user_source/"* kernel_workspace/common/
-            echo "  -> Files injected successfully."
+            cp -r "$(pwd)/tools/user_source/"* "$KERNEL_SRC_DIR/"
+            echo "  -> Files successfully injected into $KERNEL_SRC_DIR."
           else
             echo "  -> No files found in tools/user_source/ to inject."
           fi
