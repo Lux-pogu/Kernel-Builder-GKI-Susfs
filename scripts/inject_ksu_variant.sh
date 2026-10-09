@@ -37,9 +37,10 @@ if [ -f "$INJECTOR_SCRIPT" ]; then
     echo ">>> Delegating integration to modular script: $INJECTOR_SCRIPT"
     
     # We use 'source' so the child script runs in THIS environment.
-    # This allows it to set UPSTREAM_HASH, UPSTREAM_BRANCH, CALCULATED_COUNT, and CALCULATED_TAG 
-    # so we can use them in the Gatekeeper below.
     source "$INJECTOR_SCRIPT"
+    
+    # Reset active working directory back to kernel_workspace
+    cd "${GITHUB_WORKSPACE}/kernel_workspace"
 else
     echo "[-] CRITICAL: Modular script $INJECTOR_SCRIPT not found!" >&2
     exit 1
