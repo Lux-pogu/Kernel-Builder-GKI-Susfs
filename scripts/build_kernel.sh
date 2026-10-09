@@ -70,6 +70,45 @@ if [ "$BASE_VER" != "5.10" ] && [ -n "$BAZEL_BIN" ] && [ -f "$BAZEL_BIN" ]; then
     
     echo ">>> Executing Bazel from workspace: ${BAZEL_DIR:-.}"
     cd "${BAZEL_DIR:-.}"
+
+    # ---------------------------------------------------------
+    # PIXEL / DEVICE TARGET AUTO-DETECTION
+    # ---------------------------------------------------------
+    BAZEL_TARGET="//common:kernel_aarch64_dist"
+    
+    # Try to infer device name from OTA_URL if provided
+    DEVICE_NAME=""
+    if [ -n "${OTA_URL:-}" ]; then
+        DEVICE_NAME=$(echo "$OTA_URL" | sed -n 's/.*releases.grapheneos.org\/\([a-z0-9]*\)-ota.*/\1/p' || true)
+    fi
+    # Hardcode fallback if inference fails
+    if [ -z "$DEVICE_NAME" ]; then DEVICE_NAME="komodo"; fi
+
+    echo ">>> Inferred device codename: $DEVICE_NAME"
+
+    # Fast check for standard Pixel directory
+    if [ -f "private/devices/google/${DEVICE_NAME}/BUILD.bazel" ] && grep -q "name = \"${DEVICE_NAME}_dist\"" "private/devices/google/${DEVICE_NAME}/BUILD.bazel"; then
+        BAZEL_TARGET="//private/devices/google/${DEVICE_NAME}:${DEVICE_NAME}_dist"
+    else
+        # Deep search for the device target
+        echo ">>> Searching for ${DEVICE_NAME}_dist target in BUILD.bazel files..."
+        FOUND_BUILD=$(find private aosp common -type f -name "BUILD.bazel" -exec grep -l -E "name = \"${DEVICE_NAME}_dist\"" {} + | head -n 1 || true)
+        if [ -n "$FOUND_BUILD" ]; then
+            PKG_PATH=$(dirname "$FOUND_BUILD")
+            BAZEL_TARGET="//${PKG_PATH}:${DEVICE_NAME}_dist"
+        else
+            echo "[!] Could not auto-detect ${DEVICE_NAME}_dist. Searching for any target matching device..."
+            FOUND_BUILD=$(find private aosp -type f -name "BUILD.bazel" -exec grep -l "name = \"${DEVICE_NAME}\"" {} + | head -n 1 || true)
+            if [ -n "$FOUND_BUILD" ]; then
+                PKG_PATH=$(dirname "$FOUND_BUILD")
+                BAZEL_TARGET="//${PKG_PATH}:${DEVICE_NAME}"
+            else
+                echo "[!] Falling back to //common:kernel_aarch64_dist"
+            fi
+        fi
+    fi
+
+    echo ">>> Using Bazel target: $BAZEL_TARGET"
     
     # Enforce standard sandboxing, disable trimming dynamically, and inject MAKEFLAGS
     ./tools/bazel run --config=stamp \
@@ -79,7 +118,7 @@ if [ "$BASE_VER" != "5.10" ] && [ -n "$BAZEL_BIN" ] && [ -f "$BAZEL_BIN" ]; then
       --action_env=KLEAF_KERNEL_BUILD_VERSION="-g$OFFICIAL_HASH" \
       --action_env=KLEAF_SKIP_ABI_CHECKS=true \
       --action_env=KLEAF_USER=android-build \
-      //common:kernel_aarch64_dist \
+      "$BAZEL_TARGET" \
       -- \
       --destdir="${DIST_DIR_ABS}"
       
