@@ -105,57 +105,44 @@ if [ "$BASE_VER" != "5.10" ] && [ -n "$BAZEL_BIN" ] && [ -f "$BAZEL_BIN" ]; then
 
     echo ">>> Mapped Kernel Codename: $KERNEL_CODENAME"
 
-    # Check for GrapheneOS/Google dedicated build wrapper
-    if [ -f "./build_${KERNEL_CODENAME}.sh" ]; then
-        echo ">>> Found dedicated build script: ./build_${KERNEL_CODENAME}.sh"
-        
-        # Essential for GrapheneOS builds
+    # GrapheneOS relies on this custom manifest injection for Kleaf builds.
+    if [ -f "aosp_manifest.xml" ]; then
         export KLEAF_REPO_MANIFEST="aosp_manifest.xml"
-        
-        ./build_${KERNEL_CODENAME}.sh \
-          --config=stamp \
-          $TRIM_FLAGS \
-          --action_env=SOURCE_DATE_EPOCH="$OFFICIAL_DATE" \
-          --action_env=STABLE_BUILD_VERSION="-g$OFFICIAL_HASH" \
-          --action_env=KLEAF_KERNEL_BUILD_VERSION="-g$OFFICIAL_HASH" \
-          --action_env=KLEAF_SKIP_ABI_CHECKS=true \
-          --action_env=KLEAF_USER=android-build \
-          --destdir="${DIST_DIR_ABS}"
-          
+        echo ">>> Exported KLEAF_REPO_MANIFEST=aosp_manifest.xml"
+    fi
+
+    BAZEL_TARGET="//common:kernel_aarch64_dist"
+    
+    # Deep search for the exact mapped target
+    FOUND_BUILD=$(find private aosp common -type f -name "BUILD.bazel" -exec grep -l -E "name = \"${KERNEL_CODENAME}_dist\"" {} + | head -n 1 || true)
+    if [ -n "$FOUND_BUILD" ]; then
+        PKG_PATH=$(dirname "$FOUND_BUILD")
+        PKG_PATH=${PKG_PATH#./}
+        BAZEL_TARGET="//${PKG_PATH}:${KERNEL_CODENAME}_dist"
     else
-        echo ">>> Dedicated build wrapper missing. Defaulting to raw Bazel target mapping..."
-        
-        BAZEL_TARGET="//common:kernel_aarch64_dist"
-        
-        # Deep search for the exact mapped target
-        FOUND_BUILD=$(find private aosp common -type f -name "BUILD.bazel" -exec grep -l -E "name = \"${KERNEL_CODENAME}_dist\"" {} + | head -n 1 || true)
+        echo "[!] Could not auto-detect ${KERNEL_CODENAME}_dist. Searching for any target matching device..."
+        FOUND_BUILD=$(find private aosp -type f -name "BUILD.bazel" -exec grep -l "name = \"${KERNEL_CODENAME}\"" {} + | head -n 1 || true)
         if [ -n "$FOUND_BUILD" ]; then
             PKG_PATH=$(dirname "$FOUND_BUILD")
-            BAZEL_TARGET="//${PKG_PATH}:${KERNEL_CODENAME}_dist"
+            PKG_PATH=${PKG_PATH#./}
+            BAZEL_TARGET="//${PKG_PATH}:${KERNEL_CODENAME}"
         else
-            echo "[!] Could not auto-detect ${KERNEL_CODENAME}_dist. Searching for any target matching device..."
-            FOUND_BUILD=$(find private aosp -type f -name "BUILD.bazel" -exec grep -l "name = \"${KERNEL_CODENAME}\"" {} + | head -n 1 || true)
-            if [ -n "$FOUND_BUILD" ]; then
-                PKG_PATH=$(dirname "$FOUND_BUILD")
-                BAZEL_TARGET="//${PKG_PATH}:${KERNEL_CODENAME}"
-            else
-                echo "[!] Falling back to //common:kernel_aarch64_dist"
-            fi
+            echo "[!] Falling back to //common:kernel_aarch64_dist"
         fi
-
-        echo ">>> Using Bazel target: $BAZEL_TARGET"
-        
-        ./tools/bazel run --config=stamp \
-          $TRIM_FLAGS \
-          --action_env=SOURCE_DATE_EPOCH="$OFFICIAL_DATE" \
-          --action_env=STABLE_BUILD_VERSION="-g$OFFICIAL_HASH" \
-          --action_env=KLEAF_KERNEL_BUILD_VERSION="-g$OFFICIAL_HASH" \
-          --action_env=KLEAF_SKIP_ABI_CHECKS=true \
-          --action_env=KLEAF_USER=android-build \
-          "$BAZEL_TARGET" \
-          -- \
-          --destdir="${DIST_DIR_ABS}"
     fi
+
+    echo ">>> Using Bazel target: $BAZEL_TARGET"
+    
+    ./tools/bazel run --config=stamp \
+      $TRIM_FLAGS \
+      --action_env=SOURCE_DATE_EPOCH="$OFFICIAL_DATE" \
+      --action_env=STABLE_BUILD_VERSION="-g$OFFICIAL_HASH" \
+      --action_env=KLEAF_KERNEL_BUILD_VERSION="-g$OFFICIAL_HASH" \
+      --action_env=KLEAF_SKIP_ABI_CHECKS=true \
+      --action_env=KLEAF_USER=android-build \
+      "$BAZEL_TARGET" \
+      -- \
+      --destdir="${DIST_DIR_ABS}"
       
     cd "${WORKSPACE}/kernel_workspace"
 else
