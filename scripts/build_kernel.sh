@@ -14,7 +14,6 @@ WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
 cd "${WORKSPACE}/kernel_workspace"
 
 mkdir -p ../out out/dist
-# Ensure we pass an absolute path to Bazel, so output routing is agnostic to where tools/bazel lives
 DIST_DIR_ABS="$(realpath out/dist)"
 
 # --- DYNAMIC PATH RESOLUTION ---
@@ -111,34 +110,41 @@ if [ "$BASE_VER" != "5.10" ] && [ -n "$BAZEL_BIN" ] && [ -f "$BAZEL_BIN" ]; then
         echo ">>> Exported KLEAF_REPO_MANIFEST=aosp_manifest.xml"
     fi
 
-    echo ">>> Querying Bazel to dynamically resolve the exact build target for ${KERNEL_CODENAME}..."
-    
-    # Use native Bazel Query to evaluate macros and fetch the actual target name
-    BAZEL_TARGET=$(./tools/bazel query "//private/devices/google/${KERNEL_CODENAME}:all" 2>/dev/null \vert{} grep -E "_dist$" | head -n 1 || true)
-
-    if [ -z "$BAZEL_TARGET" ]; then
-        echo "[!] Target not found in expected package. Running broad query..."
-        BAZEL_TARGET=$(./tools/bazel query "//...:all" 2>/dev/null | grep -i "${KERNEL_CODENAME}" \vert{} grep -E "_dist$" | head -n 1 || true)
+    if [ -f "./build_${KERNEL_CODENAME}.sh" ]; then
+        echo ">>> Found dedicated wrapper: ./build_${KERNEL_CODENAME}.sh"
+        echo ">>> Executing native wrapper (bypassing raw Bazel args)..."
+        
+        # We DO NOT pass --destdir here because the wrapper inherently uses `bazel build` which handles
+        # outputs dynamically. Bazel config flags are passed through to the underlying engine.
+        ./build_${KERNEL_CODENAME}.sh \
+          --config=stamp \
+          $TRIM_FLAGS \
+          --action_env=SOURCE_DATE_EPOCH="$OFFICIAL_DATE" \
+          --action_env=STABLE_BUILD_VERSION="-g$OFFICIAL_HASH" \
+          --action_env=KLEAF_KERNEL_BUILD_VERSION="-g$OFFICIAL_HASH" \
+          --action_env=KLEAF_SKIP_ABI_CHECKS=true \
+          --action_env=KLEAF_USER=android-build
+          
+    else
+        echo ">>> Dedicated wrapper missing. Attempting fallback raw Bazel run..."
+        
+        # We default directly to the most standard target path format
+        BAZEL_TARGET="//private/devices/google/${KERNEL_CODENAME}:${KERNEL_CODENAME}_dist"
+        
+        echo ">>> Using Bazel target: $BAZEL_TARGET"
+        
+        # Raw execution requires bazel run + destdir handling
+        ./tools/bazel run --config=stamp \
+          $TRIM_FLAGS \
+          --action_env=SOURCE_DATE_EPOCH="$OFFICIAL_DATE" \
+          --action_env=STABLE_BUILD_VERSION="-g$OFFICIAL_HASH" \
+          --action_env=KLEAF_KERNEL_BUILD_VERSION="-g$OFFICIAL_HASH" \
+          --action_env=KLEAF_SKIP_ABI_CHECKS=true \
+          --action_env=KLEAF_USER=android-build \
+          "$BAZEL_TARGET" \
+          -- \
+          --destdir="${DIST_DIR_ABS}"
     fi
-
-    if [ -z "$BAZEL_TARGET" ]; then
-        echo "[!] Broad query failed. Falling back to generic aarch64 dist target..."
-        BAZEL_TARGET="//common:kernel_aarch64_dist"
-    fi
-
-    echo ">>> Using Bazel target: $BAZEL_TARGET"
-    
-    # Using bazel run directly with --destdir (separated properly by --)
-    ./tools/bazel run --config=stamp \
-      $TRIM_FLAGS \
-      --action_env=SOURCE_DATE_EPOCH="$OFFICIAL_DATE" \
-      --action_env=STABLE_BUILD_VERSION="-g$OFFICIAL_HASH" \
-      --action_env=KLEAF_KERNEL_BUILD_VERSION="-g$OFFICIAL_HASH" \
-      --action_env=KLEAF_SKIP_ABI_CHECKS=true \
-      --action_env=KLEAF_USER=android-build \
-      "$BAZEL_TARGET" \
-      -- \
-      --destdir="${DIST_DIR_ABS}"
       
     cd "${WORKSPACE}/kernel_workspace"
 else
@@ -170,10 +176,14 @@ else
     fi
 fi
 
-# Locate the compiled Image binary robustly (Wrapper scripts might ignore --destdir and output to out/<codename>/dist)
-IMAGE_PATH="$(find "${WORKSPACE}/kernel_workspace" -type f -name 'Image' | grep -v 'host' | head -n 1 || true)"
+# Robust binary locator. We prioritize native 'dist' directories before falling back to flat Image searches.
+IMAGE_PATH="$(find "${WORKSPACE}/kernel_workspace" -type f -path "*/out/*/dist/Image" | head -n 1 || true)"
+if [ -z "${IMAGE_PATH}" ]; then
+    IMAGE_PATH="$(find "${WORKSPACE}/kernel_workspace" -type f -name 'Image' | grep -v 'host' | head -n 1 || true)"
+fi
+
 if [ -z "${IMAGE_PATH}" ] \vert{}\vert{} [ ! -f "${IMAGE_PATH}" ]; then
-  echo "[-] No compilation Image produced!" >&2
+  echo "[-] No compilation Image produced! The build likely failed silently." >&2
   exit 1
 fi
 
@@ -184,4 +194,72 @@ cp -f "${IMAGE_PATH}" "${WORKSPACE}/out/Image"
 ACTUAL_DIST_DIR="$(dirname "${IMAGE_PATH}")"
 
 echo ">>> Extracting kernel runtime version string..."
-KERNEL_VERSION_STRING=$(strings "${WORKSPACE}/out/Image"
+KERNEL_VERSION_STRING=$(strings "${WORKSPACE}/out/Image" | grep -E "Linux version [0-9]" | head -n 1 || true)
+
+if [ -z "$KERNEL_VERSION_STRING" ]; then
+    KERNEL_VERSION_STRING=$(strings "${WORKSPACE}/out/Image" | grep -i "Linux version" | head -n 1 || true)
+fi
+
+if [ -n "$KERNEL_VERSION_STRING" ]; then
+    echo "    $KERNEL_VERSION_STRING"
+else
+    echo "    [!] Notice: Could not read raw banner string directly from compiled Image binary."
+fi
+
+# --- DYNAMIC KCONFIG VALIDATION REPORT ---
+if [ "$ENABLE_NOMOUNT" = "true" ] \vert{}\vert{} [ "$ENABLE_NET_OPTS" = "true" ]; then
+    echo "::group::Custom Kconfig Integration Report"
+    echo ""
+    echo "=============================================="
+    echo " CUSTOM KCONFIG VALIDATION REPORT             "
+    echo "=============================================="
+
+    FRAGMENT_FILE="${WORKSPACE}/tools/custom_combined.fragment"
+    
+    if [ ! -f "$FRAGMENT_FILE" ]; then
+        echo "[-] Notice: tools/custom.fragment not found. Skipping validation."
+    else
+        CONFIG_SRC=""
+        if [ -f "${ACTUAL_DIST_DIR}/config.gz" ]; then
+            CONFIG_SRC="${ACTUAL_DIST_DIR}/config.gz"
+        elif [ -f "${ACTUAL_DIST_DIR}/.config" ]; then
+            CONFIG_SRC="${ACTUAL_DIST_DIR}/.config"
+        else
+            CONFIG_SRC=$(find "${ACTUAL_DIST_DIR}" -type f \( -name "config.gz" -o -name ".config" \) 2>/dev/null | head -n 1 || true)
+        fi
+
+        if [ -z "$CONFIG_SRC" ]; then
+            echo "[!] WARN: Could not locate compiled kernel configuration target."
+        else
+            echo ">>> Extracting definitions from: $CONFIG_SRC"
+            echo "----------------------------------------------"
+            
+            REQUESTED_CONFIGS=$(grep -E '^CONFIG_' "$FRAGMENT_FILE" | cut -d'=' -f1 || true)
+            
+            if [ -z "$REQUESTED_CONFIGS" ]; then
+                echo "  [-] No active custom configs found in fragment."
+            else
+                for CFG in $REQUESTED_CONFIGS; do
+                    if [[ "$CONFIG_SRC" == *.gz ]]; then
+                        VAL=$(zgrep -E "^${CFG}=" "$CONFIG_SRC" | cut -d'=' -f2 || true)
+                    else
+                        VAL=$(grep -E "^${CFG}=" "$CONFIG_SRC" | cut -d'=' -f2 || true)
+                    fi
+
+                    if [ "$VAL" = "y" ]; then
+                        printf "  [ PASS ] %-40s = %s\n" "$CFG" "$VAL"
+                    elif [ "$VAL" = "m" ]; then
+                        printf "  [ WARN ] %-40s = %s (Module)\n" "$CFG" "$VAL"
+                    else
+                        printf "  [ DROP ] %-40s = MISSING/OVERRIDDEN\n" "$CFG"
+                    fi
+                done
+            fi
+        fi
+    fi
+
+    echo "=============================================="
+    echo "::endgroup::"
+fi
+
+echo ">>> Build execution loop completed"
