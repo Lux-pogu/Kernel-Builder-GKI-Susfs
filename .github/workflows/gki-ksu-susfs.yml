@@ -114,16 +114,12 @@ jobs:
         run: |
           TARGET_RAW="${{ inputs.target_version }}"
           
-          # Automatically append tag prefix if the input is purely numerical
-          if [[ "$TARGET_RAW" =~ ^[0-9]+$ ]]; then
-            TARGET_RAW="refs/tags/$TARGET_RAW"
-          fi
-          
           echo ">>> Using GrapheneOS Target: $TARGET_RAW"
           
+          # Export variables (MANIFEST variables kept for downstream repack metadata)
           echo "MANIFEST_BRANCH=${TARGET_RAW}" >> $GITHUB_ENV
           echo "ROOT_MANAGER=${{ inputs.root_manager }}" >> $GITHUB_ENV
-          echo "MANIFEST_URL=https://github.com/GrapheneOS/kernel_manifest-6.1" >> $GITHUB_ENV
+          echo "MANIFEST_URL=https://gitlab.com/grapheneos/kernel_pixel.git" >> $GITHUB_ENV
           
           # Hardcode BASE_VER for Pixel 9 (Tensor G4 uses 6.1) so patches apply properly
           echo "BASE_VER=6.1" >> $GITHUB_ENV
@@ -187,32 +183,17 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf kernel_workspace && mkdir -p kernel_workspace && cd kernel_workspace
-          repo init -u "$MANIFEST_URL" -b "$MANIFEST_BRANCH" --depth=1
           
-          MAX_RETRIES=3
-          for i in $(seq 1 $MAX_RETRIES); do
-            echo ">>> Running repo sync (Attempt $i of $MAX_RETRIES)..."
-            
-            if repo sync -c --no-tags --no-clone-bundle --current-branch -j$(nproc); then
-              echo ">>> Repo sync successful!"
-              break
-            else
-              if [ $i -eq $MAX_RETRIES ]; then
-                echo ">>> Repo sync completely failed after $MAX_RETRIES attempts. Aborting."
-                exit 1
-              fi
-              echo ">>> Sync connection dropped. Waiting 15 seconds before retrying..."
-              sleep 15
-            fi
-          done
-
+          echo ">>> Cloning unified GrapheneOS Pixel kernel via submodules..."
+          git clone "$MANIFEST_URL" -b "$MANIFEST_BRANCH" --recurse-submodules common --depth=1
+          
           # Capture the PURE Google hash AND the official Unix timestamp
           cd common
           echo "OFFICIAL_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
           echo "OFFICIAL_DATE=$(git log -1 --format=%ct)" >> $GITHUB_ENV
           echo ">>> Captured Hash: $(git rev-parse --short HEAD)"
           echo ">>> Captured Date: $(git log -1 --format=%ct)"
-
+          
       - name: Calculate Dynamic SuSFS Branch
         if: inputs.root_manager != 'Stock' && inputs.enable_ksu_susfs == true
         run: |
