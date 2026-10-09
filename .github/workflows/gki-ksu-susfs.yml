@@ -113,7 +113,13 @@ jobs:
         id: resolve_manifest
         run: |
           TARGET_RAW="${{ inputs.target_version }}"
-          echo ">>> Using GrapheneOS Tag/Branch: $TARGET_RAW"
+          
+          # Automatically append tag prefix if the input is purely numerical
+          if [[ "$TARGET_RAW" =~ ^[0-9]+$ ]]; then
+            TARGET_RAW="refs/tags/$TARGET_RAW"
+          fi
+          
+          echo ">>> Using GrapheneOS Target: $TARGET_RAW"
           
           echo "MANIFEST_BRANCH=${TARGET_RAW}" >> $GITHUB_ENV
           echo "ROOT_MANAGER=${{ inputs.root_manager }}" >> $GITHUB_ENV
