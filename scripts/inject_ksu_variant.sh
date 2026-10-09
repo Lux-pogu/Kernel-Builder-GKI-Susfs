@@ -46,12 +46,26 @@ else
 fi
 
 # ========================================================================
-# KERNEL ROOT RESOLUTION (FIXED SAFE LOOKUP)
+# KERNEL ROOT RESOLUTION (MULTI-DEPTH SAFE LOOKUP)
 # ========================================================================
-if [ -f "${WORKSPACE}/kernel_workspace/common/Makefile" ]; then
-    KERNEL_ROOT="${WORKSPACE}/kernel_workspace/common"
-else
-    KERNEL_ROOT=$(find "${WORKSPACE}/kernel_workspace" -maxdepth 3 -type f -name "Makefile" -exec grep -l "VERSION =" {} + | head -n 1 | xargs -r dirname || true)
+KERNEL_ROOT=""
+
+for candidate in \
+    "${WORKSPACE}/kernel_workspace/common" \
+    "${WORKSPACE}/kernel_workspace/common/aosp" \
+    "${WORKSPACE}/kernel_workspace/common/common"
+do
+    if [ -f "${candidate}/Makefile" ] && grep -q "VERSION =" "${candidate}/Makefile"; then
+        KERNEL_ROOT="${candidate}"
+        break
+    fi
+done
+
+if [ -z "$KERNEL_ROOT" ]; then
+    FOUND_MAKEFILE=$(find "${WORKSPACE}/kernel_workspace" -maxdepth 5 -type f -name "Makefile" -exec grep -l "VERSION =" {} + | head -n 1 || true)
+    if [ -n "$FOUND_MAKEFILE" ]; then
+        KERNEL_ROOT=$(dirname "$FOUND_MAKEFILE")
+    fi
 fi
 
 if [ -z "$KERNEL_ROOT" ] || [ ! -f "${KERNEL_ROOT}/Makefile" ]; then
