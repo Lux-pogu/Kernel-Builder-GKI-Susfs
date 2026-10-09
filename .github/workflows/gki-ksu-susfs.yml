@@ -244,14 +244,20 @@ jobs:
           if [ "$ENABLE_NOMOUNT" = "true" ]; then
             echo ">>> Fetching pinned nomount source..."
             NOMOUNT_DIR="$(pwd)/tools/user_source/fs/nomount"
+            mkdir -p "$NOMOUNT_DIR"
             NOMOUNT_COMMIT="c7f63e3feb4125d591b6969a33aac04feb40f8ba"
             
             # Export to GITHUB_ENV so the Artifact fetcher can use it later
             echo "NOMOUNT_COMMIT=${NOMOUNT_COMMIT}" >> $GITHUB_ENV
             
-            # Force overwrite the existing .c and .h files with the pinned working versions
+            # Fetch the C source files
             curl -sSL "https://raw.githubusercontent.com/maxsteeel/nomount/${NOMOUNT_COMMIT}/kernel/src/nomount.c" -o "$NOMOUNT_DIR/nomount.c"
             curl -sSL "https://raw.githubusercontent.com/maxsteeel/nomount/${NOMOUNT_COMMIT}/kernel/src/nomount.h" -o "$NOMOUNT_DIR/nomount.h"
+            
+            # Generate the missing build files
+            echo ">>> Generating Kconfig and Makefile for nomount..."
+            echo -e "config NOMOUNT\n\tbool \"nomount VFS interceptor\"\n\tdefault y" > "$NOMOUNT_DIR/Kconfig"
+            echo "obj-\$(CONFIG_NOMOUNT) += nomount.o" > "$NOMOUNT_DIR/Makefile"
           fi
 
           echo ">>> Injecting user source files into common tree..."
