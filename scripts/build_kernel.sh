@@ -74,7 +74,6 @@ if [ "$BASE_VER" != "5.10" ] && [ -n "$BAZEL_BIN" ] && [ -f "$BAZEL_BIN" ]; then
     # ---------------------------------------------------------
     # PIXEL / DEVICE TARGET AUTO-DETECTION
     # ---------------------------------------------------------
-    BAZEL_TARGET="//common:kernel_aarch64_dist"
     
     # Try to infer device name from OTA_URL if provided
     DEVICE_NAME=""
@@ -86,41 +85,77 @@ if [ "$BASE_VER" != "5.10" ] && [ -n "$BAZEL_BIN" ] && [ -f "$BAZEL_BIN" ]; then
 
     echo ">>> Inferred device codename: $DEVICE_NAME"
 
-    # Fast check for standard Pixel directory
-    if [ -f "private/devices/google/${DEVICE_NAME}/BUILD.bazel" ] && grep -q "name = \"${DEVICE_NAME}_dist\"" "private/devices/google/${DEVICE_NAME}/BUILD.bazel"; then
-        BAZEL_TARGET="//private/devices/google/${DEVICE_NAME}:${DEVICE_NAME}_dist"
+    # Map Google Pixel device codenames to their shared kernel repository codenames
+    KERNEL_CODENAME=""
+    case "$DEVICE_NAME" in
+        stallion) KERNEL_CODENAME="stallion" ;;
+        tegu) KERNEL_CODENAME="tegu" ;;
+        comet) KERNEL_CODENAME="comet" ;;
+        komodo|caiman|tokay) KERNEL_CODENAME="caimito" ;;
+        akita) KERNEL_CODENAME="akita" ;;
+        husky|shiba) KERNEL_CODENAME="shusky" ;;
+        felix) KERNEL_CODENAME="felix" ;;
+        tangorpro) KERNEL_CODENAME="tangorpro" ;;
+        lynx) KERNEL_CODENAME="lynx" ;;
+        cheetah|panther) KERNEL_CODENAME="pantah" ;;
+        bluejay) KERNEL_CODENAME="bluejay" ;;
+        raven|oriole) KERNEL_CODENAME="raviole" ;;
+        *) KERNEL_CODENAME="$DEVICE_NAME" ;;
+    esac
+
+    echo ">>> Mapped Kernel Codename: $KERNEL_CODENAME"
+
+    # Check for GrapheneOS/Google dedicated build wrapper
+    if [ -f "./build_${KERNEL_CODENAME}.sh" ]; then
+        echo ">>> Found dedicated build script: ./build_${KERNEL_CODENAME}.sh"
+        
+        # Essential for GrapheneOS builds
+        export KLEAF_REPO_MANIFEST="aosp_manifest.xml"
+        
+        ./build_${KERNEL_CODENAME}.sh \
+          --config=stamp \
+          $TRIM_FLAGS \
+          --action_env=SOURCE_DATE_EPOCH="$OFFICIAL_DATE" \
+          --action_env=STABLE_BUILD_VERSION="-g$OFFICIAL_HASH" \
+          --action_env=KLEAF_KERNEL_BUILD_VERSION="-g$OFFICIAL_HASH" \
+          --action_env=KLEAF_SKIP_ABI_CHECKS=true \
+          --action_env=KLEAF_USER=android-build \
+          --destdir="${DIST_DIR_ABS}"
+          
     else
-        # Deep search for the device target
-        echo ">>> Searching for ${DEVICE_NAME}_dist target in BUILD.bazel files..."
-        FOUND_BUILD=$(find private aosp common -type f -name "BUILD.bazel" -exec grep -l -E "name = \"${DEVICE_NAME}_dist\"" {} + | head -n 1 || true)
+        echo ">>> Dedicated build wrapper missing. Defaulting to raw Bazel target mapping..."
+        
+        BAZEL_TARGET="//common:kernel_aarch64_dist"
+        
+        # Deep search for the exact mapped target
+        FOUND_BUILD=$(find private aosp common -type f -name "BUILD.bazel" -exec grep -l -E "name = \"${KERNEL_CODENAME}_dist\"" {} + | head -n 1 || true)
         if [ -n "$FOUND_BUILD" ]; then
             PKG_PATH=$(dirname "$FOUND_BUILD")
-            BAZEL_TARGET="//${PKG_PATH}:${DEVICE_NAME}_dist"
+            BAZEL_TARGET="//${PKG_PATH}:${KERNEL_CODENAME}_dist"
         else
-            echo "[!] Could not auto-detect ${DEVICE_NAME}_dist. Searching for any target matching device..."
-            FOUND_BUILD=$(find private aosp -type f -name "BUILD.bazel" -exec grep -l "name = \"${DEVICE_NAME}\"" {} + | head -n 1 || true)
+            echo "[!] Could not auto-detect ${KERNEL_CODENAME}_dist. Searching for any target matching device..."
+            FOUND_BUILD=$(find private aosp -type f -name "BUILD.bazel" -exec grep -l "name = \"${KERNEL_CODENAME}\"" {} + | head -n 1 || true)
             if [ -n "$FOUND_BUILD" ]; then
                 PKG_PATH=$(dirname "$FOUND_BUILD")
-                BAZEL_TARGET="//${PKG_PATH}:${DEVICE_NAME}"
+                BAZEL_TARGET="//${PKG_PATH}:${KERNEL_CODENAME}"
             else
                 echo "[!] Falling back to //common:kernel_aarch64_dist"
             fi
         fi
-    fi
 
-    echo ">>> Using Bazel target: $BAZEL_TARGET"
-    
-    # Enforce standard sandboxing, disable trimming dynamically, and inject MAKEFLAGS
-    ./tools/bazel run --config=stamp \
-      $TRIM_FLAGS \
-      --action_env=SOURCE_DATE_EPOCH="$OFFICIAL_DATE" \
-      --action_env=STABLE_BUILD_VERSION="-g$OFFICIAL_HASH" \
-      --action_env=KLEAF_KERNEL_BUILD_VERSION="-g$OFFICIAL_HASH" \
-      --action_env=KLEAF_SKIP_ABI_CHECKS=true \
-      --action_env=KLEAF_USER=android-build \
-      "$BAZEL_TARGET" \
-      -- \
-      --destdir="${DIST_DIR_ABS}"
+        echo ">>> Using Bazel target: $BAZEL_TARGET"
+        
+        ./tools/bazel run --config=stamp \
+          $TRIM_FLAGS \
+          --action_env=SOURCE_DATE_EPOCH="$OFFICIAL_DATE" \
+          --action_env=STABLE_BUILD_VERSION="-g$OFFICIAL_HASH" \
+          --action_env=KLEAF_KERNEL_BUILD_VERSION="-g$OFFICIAL_HASH" \
+          --action_env=KLEAF_SKIP_ABI_CHECKS=true \
+          --action_env=KLEAF_USER=android-build \
+          "$BAZEL_TARGET" \
+          -- \
+          --destdir="${DIST_DIR_ABS}"
+    fi
       
     cd "${WORKSPACE}/kernel_workspace"
 else
@@ -152,14 +187,18 @@ else
     fi
 fi
 
-IMAGE_PATH="$(find "${DIST_DIR_ABS}" -type f -name 'Image' -print -quit)"
+# Locate the compiled Image binary robustly (Wrapper scripts might ignore --destdir and output to out/<codename>/dist)
+IMAGE_PATH="$(find "${WORKSPACE}/kernel_workspace" -type f -name 'Image' | grep -v 'host' | head -n 1 || true)"
 if [ -z "${IMAGE_PATH}" ] || [ ! -f "${IMAGE_PATH}" ]; then
-  echo "[-] No compilation Image produced in ${DIST_DIR_ABS}!" >&2
+  echo "[-] No compilation Image produced!" >&2
   exit 1
 fi
 
 echo ">>> Selected Image: ${IMAGE_PATH}"
 cp -f "${IMAGE_PATH}" "${WORKSPACE}/out/Image"
+
+# Map the dist directory to wherever the Image ended up for config checks
+ACTUAL_DIST_DIR="$(dirname "${IMAGE_PATH}")"
 
 echo ">>> Extracting kernel runtime version string..."
 KERNEL_VERSION_STRING=$(strings "${WORKSPACE}/out/Image" | grep -E "Linux version [0-9]" | head -n 1 || true)
@@ -188,12 +227,12 @@ if [ "$ENABLE_NOMOUNT" = "true" ] || [ "$ENABLE_NET_OPTS" = "true" ]; then
         echo "[-] Notice: tools/custom.fragment not found. Skipping validation."
     else
         CONFIG_SRC=""
-        if [ -f "${DIST_DIR_ABS}/config.gz" ]; then
-            CONFIG_SRC="${DIST_DIR_ABS}/config.gz"
-        elif [ -f "${DIST_DIR_ABS}/.config" ]; then
-            CONFIG_SRC="${DIST_DIR_ABS}/.config"
+        if [ -f "${ACTUAL_DIST_DIR}/config.gz" ]; then
+            CONFIG_SRC="${ACTUAL_DIST_DIR}/config.gz"
+        elif [ -f "${ACTUAL_DIST_DIR}/.config" ]; then
+            CONFIG_SRC="${ACTUAL_DIST_DIR}/.config"
         else
-            CONFIG_SRC=$(find "${DIST_DIR_ABS}" -type f \( -name "config.gz" -o -name ".config" \) 2>/dev/null | head -n 1 || true)
+            CONFIG_SRC=$(find "${ACTUAL_DIST_DIR}" -type f \( -name "config.gz" -o -name ".config" \) 2>/dev/null | head -n 1 || true)
         fi
 
         if [ -z "$CONFIG_SRC" ]; then
