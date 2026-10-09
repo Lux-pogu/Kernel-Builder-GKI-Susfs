@@ -2,7 +2,8 @@
 # scripts/inject_ksu_variant.sh
 set -euo pipefail
 
-cd "${GITHUB_WORKSPACE}/kernel_workspace"
+WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
+cd "${WORKSPACE}/kernel_workspace"
 
 VARIANT=$1
 # Export these so the sourced scripts can use them natively
@@ -38,16 +39,22 @@ if [ -f "$INJECTOR_SCRIPT" ]; then
     source "$INJECTOR_SCRIPT"
     
     # Reset active working directory back to kernel_workspace
-    cd "${GITHUB_WORKSPACE}/kernel_workspace"
+    cd "${WORKSPACE}/kernel_workspace"
 else
     echo "[-] CRITICAL: Modular script $INJECTOR_SCRIPT not found!" >&2
     exit 1
 fi
 
-# Dynamically find the directory containing the top-level kernel Makefile
-KERNEL_ROOT=$(find "${GITHUB_WORKSPACE}/kernel_workspace" -maxdepth 3 -type f -name "Makefile" -exec grep -l "^VERSION =" {} + | head -n 1 | xargs dirname)
+# ========================================================================
+# KERNEL ROOT RESOLUTION (FIXED SAFE LOOKUP)
+# ========================================================================
+if [ -f "${WORKSPACE}/kernel_workspace/common/Makefile" ]; then
+    KERNEL_ROOT="${WORKSPACE}/kernel_workspace/common"
+else
+    KERNEL_ROOT=$(find "${WORKSPACE}/kernel_workspace" -maxdepth 3 -type f -name "Makefile" -exec grep -l "VERSION =" {} + | head -n 1 | xargs -r dirname || true)
+fi
 
-if [ -z "$KERNEL_ROOT" ]; then
+if [ -z "$KERNEL_ROOT" ] || [ ! -f "${KERNEL_ROOT}/Makefile" ]; then
     echo "[-] Error: Could not locate kernel Makefile in kernel_workspace" >&2
     exit 1
 fi
@@ -58,7 +65,7 @@ echo ">>> Detected kernel source root at: ${KERNEL_ROOT}"
 # KERNEL 6.6/6.12 UPSTREAM COMPATIBILITY FIXES (UNIVERSAL TARGETED WIPER)
 # ========================================================================
 echo ">>> Normalizing SELinux function declarations across all variants..."
-SELINUX_HIDE="${MANAGER_DIR}/kernel/feature/selinux_hide.c"
+SELINUX_HIDE="${WORKSPACE}/kernel_workspace/${MANAGER_DIR}/kernel/feature/selinux_hide.c"
 
 if [ -f "$SELINUX_HIDE" ]; then
     
@@ -98,7 +105,7 @@ SHORT_HASH=${UPSTREAM_HASH:0:7}
 echo "UPSTREAM_HASH=${UPSTREAM_HASH}" >> $GITHUB_ENV
 
 echo ">>> Injecting Sandbox Variables into Kbuild..."
-TARGET_KBUILD="${MANAGER_DIR}/kernel/Kbuild"
+TARGET_KBUILD="${WORKSPACE}/kernel_workspace/${MANAGER_DIR}/kernel/Kbuild"
 
 if [ -f "$TARGET_KBUILD" ]; then
     {
@@ -142,7 +149,7 @@ DRIVER_ROOT="${KERNEL_ROOT}/drivers"
 mkdir -p "${DRIVER_ROOT}"
 rm -rf "${DRIVER_ROOT}/kernelsu"
 
-TARGET_KSU_DIR="${GITHUB_WORKSPACE}/kernel_workspace/${MANAGER_DIR}/kernel"
+TARGET_KSU_DIR="${WORKSPACE}/kernel_workspace/${MANAGER_DIR}/kernel"
 REL_PATH=$(python3 -c "import os.path; print(os.path.relpath('${TARGET_KSU_DIR}', '${DRIVER_ROOT}'))")
 
 ln -sfn "${REL_PATH}" "${DRIVER_ROOT}/kernelsu"
