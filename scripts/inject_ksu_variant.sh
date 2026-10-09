@@ -2,7 +2,7 @@
 # scripts/inject_ksu_variant.sh
 set -euo pipefail
 
-cd kernel_workspace
+cd kernel_workspace/common
 [ -d common ] || { echo "[-] common/ not found in kernel_workspace" >&2; exit 1; }
 
 VARIANT=$1
